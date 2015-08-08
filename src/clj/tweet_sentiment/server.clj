@@ -16,13 +16,13 @@
             [clojure.core.async :refer [>!! <!! put! take! pipe chan]]
             [cemerick.drawbridge :as drawbridge]
             [ring.middleware.basic-authentication :refer [wrap-basic-authentication]]
+            [ring.middleware.params :as params]
+            [ring.middleware.keyword-params :as keyword-params]
+            [ring.middleware.nested-params :as nested-params]
+            [ring.middleware.session :as session]
+            [compojure.handler :refer [site]]
             )
   (:gen-class))
-
-(defonce server (atom nil))
-
-(deftemplate page (io/resource "index.html") []
-             [:body] (if is-dev? inject-devmode-html identity))
 
 (defn get-tweets-sentiment [keyword]
   (let [[tw-in tw-out] (tweets)
@@ -31,6 +31,11 @@
     (put! tw-in keyword)
     (let [tweets (<!! ds-out)]
       (generate-response (reverse (sort-by :sentiment tweets)) {:status :ok}))))
+
+(defonce server (atom nil))
+
+(deftemplate page (io/resource "index.html") []
+             [:body] (if is-dev? inject-devmode-html identity))
 
 (defroutes routes
            (resources "/")
@@ -41,34 +46,36 @@
 (defn authenticated? [name pass]
   (= [name pass] [(System/getenv "AUTH_USER") (System/getenv "AUTH_PASS")]))
 
+(def drawbridge-handler
+  (-> (drawbridge/ring-handler)
+      (keyword-params/wrap-keyword-params)
+      (nested-params/wrap-nested-params)
+      (params/wrap-params)
+      (session/wrap-session)))
 
-;(defn wrap-drawbridge [handler]
-;  (fn [req]
-;    (let [handler (if (= "/repl" (:uri req))
-;                    (-> handler
-;                        (wrap-basic-authentication authenticated?)
-;                        (drawbridge/ring-handler))
-;                    handler)]
-;      (handler req))))
+(defn http-handler [handler]
+  (-> handler
+      (wrap-defaults api-defaults)
+      wrap-edn-params))
 
-(defn wrap-drawbridge [handler]
+(defn wrap-http [handler]
   (fn [req]
-    (if (= "/repl" (:uri req))
-      (drawbridge/ring-handler req)
+    (let [handler (if (= "/repl" (:uri req))
+                    (wrap-basic-authentication drawbridge-handler authenticated?)
+                    (if is-dev?
+                      (-> handler
+                          http-handler
+                          reload/wrap-reload)
+                      (-> handler
+                          http-handler)))]
       (handler req))))
-
-
-(def http-handler
-  (if is-dev?
-    (-> (wrap-defaults #'routes api-defaults)
-        reload/wrap-reload
-        wrap-edn-params)
-    (wrap-defaults routes api-defaults)))
 
 (defn run-web-server [& [port]]
   (let [port (Integer. (or port (env :port) 10555))]
     (println (format "Starting web server on port %d." port))
-    (reset! server (run-server http-handler {:port port :join? false}))))
+    (reset! server
+            (run-server (wrap-http #'routes) {:port port :join? false})
+            )))
 
 (defn run-auto-reload [& [port]]
   (auto-reload *ns*)
@@ -82,8 +89,6 @@
 
 (defn stop-server []
   (when-not (nil? @server)
-    ;; graceful shutdown: wait 100ms for existing requests to be finished
-    ;; :timeout is optional, when no timeout, stop immediately
     (@server :timeout 0)
     (reset! server nil)))
 
