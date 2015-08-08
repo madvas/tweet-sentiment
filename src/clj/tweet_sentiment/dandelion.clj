@@ -30,8 +30,10 @@
                             (map get-sentiment)
                             (async/map vector)
                             )]
-        (>! out (map (fn [sen tw]
-                       (assoc tw :sentiment (u/round (get-in sen [:sentiment :score]) 2)))
-                     (first (alts! [sentiments (timeout 10000)])) tweets)))
+        (>! out (if (empty? tweets)
+                  ()
+                  (map (fn [sen tw]
+                         (assoc tw :sentiment (u/round (get-in sen [:sentiment :score]) 2)))
+                       (first (alts! [sentiments (timeout 20000)])) tweets))))
       )
     [in out]))

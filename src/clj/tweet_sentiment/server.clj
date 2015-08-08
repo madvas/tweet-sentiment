@@ -20,7 +20,6 @@
             [ring.middleware.keyword-params :as keyword-params]
             [ring.middleware.nested-params :as nested-params]
             [ring.middleware.session :as session]
-            [compojure.handler :refer [site]]
             )
   (:gen-class))
 
